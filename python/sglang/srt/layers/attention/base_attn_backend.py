@@ -59,7 +59,10 @@ def resolve_window_id_space(
         return None
     allocator = model_runner.token_to_kv_pool_allocator
     if allocator.hands_out_virtual_ids and window_pool.requires_physical_write_loc:
-        return allocator.id_spaces().get(IdSpaceKind.SLIDING_WINDOW)
+        # The allocator's spaces go by sub-pool name: the window playing the
+        # sliding-window role is the allocator's window.
+        window = allocator.roles.window
+        return None if window is None else allocator.id_spaces().get(window)
     return window_pool.id_spaces().get(IdSpaceKind.SLIDING_WINDOW)
 
 
