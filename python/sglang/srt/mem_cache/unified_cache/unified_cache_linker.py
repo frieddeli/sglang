@@ -265,6 +265,7 @@ class UnifiedCacheLinkerWrapper:
         # A store without SWA pages tombstones restored tails instead.
         self._swa_pool = swa.pool_name if swa is not None else PoolName.SWA
         self._skip_swa = swa is not None and self._swa_pool not in cache_linker.pools
+        self._window = swa
         self._components = tuple(
             component
             for component in cache._components_tuple
@@ -463,9 +464,9 @@ class UnifiedCacheLinkerWrapper:
                 from sglang.srt.managers.schedule_batch import ReqKvInfo
 
                 req.kv = ReqKvInfo(kv_allocated_len=prefix_len)
+            name = self._window.window_sub_pool
             req.kv.set_evicted_seqlen(
-                ComponentType.SWA,
-                max(req.kv.get_evicted_seqlen(ComponentType.SWA), prefix_len),
+                name, max(req.kv.get_evicted_seqlen(name), prefix_len)
             )
 
         # match placed the SWA branch point before this tail was known; a point

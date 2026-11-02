@@ -1564,13 +1564,14 @@ def test_linker_load_preserves_swa_boundaries(
 ):
     full = full_linker_component
     swa = SWAComponent.__new__(SWAComponent)
+    swa.__dict__["_window_sub_pool"] = "swa"
     participates = swa_stored
 
     def prepare(phase, req, full_transfer, transfer, prefix_len, **kwargs):
         if phase == ExternalLinkerLoadPhase.PREPARE:
             req.kv = ReqKvInfo(
                 kv_allocated_len=prefix_len,
-                component_evicted_seqlens={ComponentType.SWA: prefix_len - 2},
+                window_evicted_seqlens={"swa": prefix_len - 2},
             )
         return transfer
 
@@ -1600,7 +1601,7 @@ def test_linker_load_preserves_swa_boundaries(
         if previous_boundary is None
         else ReqKvInfo(
             kv_allocated_len=previous_boundary,
-            component_evicted_seqlens={ComponentType.SWA: previous_boundary},
+            window_evicted_seqlens={"swa": previous_boundary},
         )
     )
     req = SimpleNamespace(
@@ -1628,7 +1629,7 @@ def test_linker_load_preserves_swa_boundaries(
     assert wrapper.inflight_load_rids == ["rid"]
     assert torch.equal(wrapper.private_load_indices["rid"], restored)
     assert req.swa_branching_seqlen is None
-    assert req.kv.get_evicted_seqlen(ComponentType.SWA) == expected_boundary
+    assert req.kv.get_evicted_seqlen("swa") == expected_boundary
     assert req.kv.kv_allocated_len == (previous_boundary or 4)
     assert [c.args[0] for c in full.build_external_linker_transfer.call_args_list] == [
         LinkerTransferPhase.LOAD

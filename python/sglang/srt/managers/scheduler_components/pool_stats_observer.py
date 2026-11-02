@@ -11,7 +11,6 @@ from typing import (
 )
 
 from sglang.srt.mem_cache.allocator.swa import is_swa_req_ring
-from sglang.srt.mem_cache.unified_cache.component_type import ComponentType
 from sglang.srt.utils.common import ceil_align
 
 if TYPE_CHECKING:
@@ -33,14 +32,12 @@ def kv_private_tokens(kv: ReqKvInfo, page_size: int) -> int:
     return ceil_align(kv.kv_allocated_len, page_size) - kv.cache_protected_len
 
 
-def kv_private_window_tokens(
-    kv: ReqKvInfo, page_size: int, component: ComponentType
-) -> int:
+def kv_private_window_tokens(kv: ReqKvInfo, page_size: int, sub_pool: str) -> int:
     # Window eviction frees only [window_dead_lo, evicted); [protected, window_dead_lo)
     # stays held until the request finishes, even after the cursor jumps past it.
     allocated = ceil_align(kv.kv_allocated_len, page_size)
     window_freed = max(
-        0, kv.get_evicted_seqlen(component) - kv.window_dead_lo(page_size)
+        0, kv.get_evicted_seqlen(sub_pool) - kv.window_dead_lo(page_size)
     )
     return allocated - kv.cache_protected_len - window_freed
 
@@ -59,9 +56,6 @@ class WindowPoolStats:
 
     name: str
     sub_pool: str
-    # The tree slot whose cursors and locks describe this window; a tree that
-    # keeps no window slots retires its one window as `ComponentType.SWA`.
-    component: ComponentType
     capacity: int
     available_size: int
     evictable_size: int
@@ -213,10 +207,10 @@ class SchedulerPoolStatsObserver:
         page_size = self.tree_cache.page_size
         return sum(kv_private_tokens(kv, page_size) for kv in self._session_kv_rows())
 
-    def session_held_window_tokens(self, component: ComponentType) -> int:
+    def session_held_window_tokens(self, sub_pool: str) -> int:
         page_size = self.tree_cache.page_size
         return sum(
-            kv_private_window_tokens(kv, page_size, component)
+            kv_private_window_tokens(kv, page_size, sub_pool)
             for kv in self._session_kv_rows()
         )
 
@@ -323,21 +317,16 @@ class SchedulerPoolStatsObserver:
             mamba_evictable_size=mamba_evictable_size,
         )
 
-    def _window_slot(self, sub_pool: str) -> Optional[ComponentType]:
-        """The tree slot keeping window sub-pool ``sub_pool``, if any."""
-        for slot in self.tree_cache.window_slots():
-            if self.storage.tree_sub_pool(slot) == sub_pool:
-                return slot
-        return None
-
     def _window_evictable_size(self, sub_pool: str) -> int:
         """Evictable tokens the prefix tree holds in window sub-pool
         ``sub_pool``: its slot's, or, for a tree keeping one pool and no window
         slots, everything it can evict."""
-        if not self.tree_cache.window_slots():
+        names = [name for name, _ in self.tree_cache.window_sub_pools()]
+        if not names:
             return self.tree_cache.evictable_size()
-        slot = self._window_slot(sub_pool)
-        return 0 if slot is None else self.tree_cache.window_evictable_size(slot)
+        return (
+            self.tree_cache.window_evictable_size(sub_pool) if sub_pool in names else 0
+        )
 
     def _in_tree_order(
         self, windows: Tuple[SubPoolUsage, ...]
@@ -345,8 +334,7 @@ class SchedulerPoolStatsObserver:
         """The window sub-pools in the prefix tree's window order. A sub-pool
         no slot keeps comes last."""
         order = {
-            self.storage.tree_sub_pool(slot): i
-            for i, slot in enumerate(self.tree_cache.window_slots())
+            name: i for i, (name, _) in enumerate(self.tree_cache.window_sub_pools())
         }
         return tuple(sorted(windows, key=lambda w: order.get(w.name, len(order))))
 
@@ -386,7 +374,6 @@ class SchedulerPoolStatsObserver:
                 WindowPoolStats(
                     name=window.label,
                     sub_pool=window.name,
-                    component=self._window_slot(window.name) or ComponentType.SWA,
                     capacity=capacity,
                     available_size=available,
                     evictable_size=evictable,
