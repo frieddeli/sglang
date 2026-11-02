@@ -90,7 +90,7 @@ class PrefillBudget:
         return self._available_and_evictable() - self.current_offset
 
     @property
-    def remaining_swa(self):
+    def remaining_window_tokens(self):
         return 0
 
     def has_capacity(self) -> bool:
@@ -192,7 +192,7 @@ class SWAPrefillBudget(PrefillBudget):
         )
 
     @property
-    def remaining_swa(self):
+    def remaining_window_tokens(self):
         evictable = 0 if self.req_ring else self.tree_cache.swa_evictable_size()
         return self.allocator.swa_available_size() + evictable - self.swa_offset
 
@@ -229,7 +229,7 @@ class SWAPrefillBudget(PrefillBudget):
         headroom = self.swa_tokens(
             0, max_new_tokens, window_host_hit_lengths=window_host_hit_lengths
         )
-        cap = int(self.remaining_swa) - headroom
+        cap = int(self.remaining_window_tokens) - headroom
         return max(0, cap // self.page_size * self.page_size)
 
     def check_prefill(
@@ -253,9 +253,9 @@ class SWAPrefillBudget(PrefillBudget):
             window_host_hit_lengths=window_host_hit_lengths,
         )
         fits = (
-            needed <= self.remaining_swa
+            needed <= self.remaining_window_tokens
             if self.req_ring
-            else needed < self.remaining_swa
+            else needed < self.remaining_window_tokens
         )
         if fits:
             return True, chunk_limit
@@ -274,12 +274,14 @@ class SWAPrefillBudget(PrefillBudget):
         return True, min(chunk_limit, cap)
 
     def has_capacity(self) -> bool:
-        return super().has_capacity() and self.remaining_swa > 0
+        return super().has_capacity() and self.remaining_window_tokens > 0
 
     def available_chunk_tokens(self, chunk_limit: int) -> int | None:
         available = min(chunk_limit, int(self.remaining_total))
         if not self.req_ring:
-            available = min(available, int(self.remaining_swa) - self.page_size)
+            available = min(
+                available, int(self.remaining_window_tokens) - self.page_size
+            )
         return available if available > 0 else None
 
     def can_allocate_prefill(
@@ -306,7 +308,7 @@ class SWAPrefillBudget(PrefillBudget):
                 chunk_limit=chunk_limit,
                 window_host_hit_lengths=window_host_hit_lengths,
             )
-            <= self.remaining_swa
+            <= self.remaining_window_tokens
         )
 
     def reserve(
@@ -419,16 +421,16 @@ class ChainPrefillBudget(PrefillBudget):
         )
 
     @property
-    def remaining_swa(self):
-        # Token views for paths that size work by a token count (dLLM): the
-        # target window's reachable tokens less what is pending on it.
+    def remaining_window_tokens(self):
+        # Token view for paths that size work by a token count (dLLM): the
+        # fewest tokens any window can still take, less what is pending on it.
         if not self.windows:
             return 0
-        name = self.allocator.swa_attn_allocator.sub_pool_name
-        return (
-            self.allocator.swa_available_size()
-            + self.tree_cache.swa_evictable_size()
+        return min(
+            self.allocator.window_available_size(name)
+            + self.tree_cache.window_evictable_size(name)
             - self.window_offsets[name]
+            for name, _ in self.windows
         )
 
     def has_capacity(self) -> bool:
