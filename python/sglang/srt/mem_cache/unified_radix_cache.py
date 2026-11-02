@@ -2128,7 +2128,6 @@ class UnifiedRadixCache(BasePrefixCache):
                 indices_source = kv_xfer
             else:
                 source_component = {
-                    PoolName.SWA: ComponentType.SWA,
                     PoolName.MAMBA: ComponentType.MAMBA,
                     # A window keeps its copies in its own host pool.
                     **{self.components[ct].pool_name: ct for ct in self.window_slots()},
