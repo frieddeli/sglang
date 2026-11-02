@@ -181,19 +181,22 @@ class SWAPrefillBudget(PrefillBudget):
         self.all_swa = all_swa
         self.req_ring = is_swa_req_ring(self.allocator)
 
+    def _window_evictable(self) -> int:
+        """Evictable tokens of the static pools' one window."""
+        from sglang.srt.mem_cache.base_swa_memory_pool import BaseSWAKVPool
+
+        return self.tree_cache.window_evictable_size(BaseSWAKVPool.WINDOW_SUB_POOL)
+
     def _available_and_evictable(self):
         if self.all_swa:
-            return (
-                self.allocator.swa_available_size()
-                + self.tree_cache.swa_evictable_size()
-            )
+            return self.allocator.swa_available_size() + self._window_evictable()
         return (
             self.allocator.full_available_size() + self.tree_cache.full_evictable_size()
         )
 
     @property
     def remaining_window_tokens(self):
-        evictable = 0 if self.req_ring else self.tree_cache.swa_evictable_size()
+        evictable = 0 if self.req_ring else self._window_evictable()
         return self.allocator.swa_available_size() + evictable - self.swa_offset
 
     def swa_tokens(

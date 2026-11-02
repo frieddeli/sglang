@@ -55,7 +55,7 @@ from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 from sglang.srt.runtime_context import publish, reset_context
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
 from sglang.test.ci.ci_register import register_cpu_ci
-from sglang.test.tree_slots import tree_slots_of
+from sglang.test.tree_slots import tree_slots_of, window_evictable
 from sglang.test.unified_allocator_fixtures import (
     build_test_unified_pools,
     build_tri_pool,
@@ -640,7 +640,7 @@ class TestLoadBackAdmission(_UnifiedHiCacheCase):
         self.cache.writing_check()
         running_node = self._match(running).last_device_node
         pin = self.cache.inc_lock_ref(running_node).to_dec_params()
-        reclaimable_swa = self.cache.swa_evictable_size()
+        reclaimable_swa = window_evictable(self.cache)
         # The batch's decode tokens are pending demand on both bands. With
         # them, the load fits the shared gap only after that SWA is reclaimed.
         decode = 6 * PAGE
@@ -663,7 +663,7 @@ class TestLoadBackAdmission(_UnifiedHiCacheCase):
         self.assertEqual(len(moves), moved)
         # That room came from reclaiming the running request's out-of-window
         # SWA; its FULL rows and its window stay.
-        self.assertLess(self.cache.swa_evictable_size(), reclaimable_swa)
+        self.assertLess(window_evictable(self.cache), reclaimable_swa)
         self._assert_rows(running_ids, running_expected, swa_tail=self.window)
 
         self.cache.ready_to_load_host_cache()
